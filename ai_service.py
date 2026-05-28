@@ -1,28 +1,36 @@
-"""
-AI Service using Claude API.
-Pure ASCII source - Chinese text uses Unicode escapes.
-"""
 import anthropic
 import os
+import re
 import logging
 
-
 logger = logging.getLogger(__name__)
-
 
 MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 512
 
+EXPERT_SYSTEM_PROMPT = (
+    "你是一位專業的股票分析師，擅長台灣股市和美市分析。\n"
+    "請用繁體中文回答。\n\n"
+    "你能夠：\n"
+    "1. 解釋股市行情和趨勢\n"
+    "2. 分析個股基本面和技術面\n"
+    "3. 解釋股市指標和術語\n"
+    "4. 提供參考資訊（不構成投資建議）\n"
+    "5. 分析總體經濟和產業趨勢\n\n"
+    "請保持專業、客觀，並提醒用戶投資有風險。"
+)
 
-EXPERT_SYSTEM_PROMPT = "\u4f60\u662f\u4e00\u4f4d\u5c08\u696d\u7684\u80a1\u7968\u5206\u6790\u5e2b\uff0c\u64c5\u9577\u53f0\u7063\u80a1\u5e02\u548c\u7f8e\u5e02\u5206\u6790\u3002\n\u8acb\u7528\u7e41\u9ad4\u4e2d\u6587\u56de\u7b54\u3002\n\n\u4f60\u80fd\u5920\uff1a\n1. \u89e3\u91cb\u80a1\u5e02\u884c\u60c5\u548c\u8da8\u52e2\n2. \u5206\u6790\u500b\u80a1\u57fa\u672c\u9762\u548c\u6280\u8853\u9762\n3. \u89e3\u91cb\u80a1\u5e02\u6307\u6a19\u548c\u8853\u8a9e\n4. \u63d0\u4f9b\u6295\u8cc7\u5efa\u8b70\uff08\u4e0d\u69cb\u6210\u6295\u8cc7\u5efa\u8b70\uff09\n5. \u5206\u6790\u7e3d\u9ad4\u7d93\u6fdf\u548c\u7522\u696d\u8da8\u52e2\n\n\u8acb\u4fdd\u6301\u5c08\u696d\u3001\u5ba2\u89c0\uff0c\u4e26\u63d0\u9192\u7528\u6236\u6295\u8cc7\u6709\u98a8\u96aa\u3002"
-
-
-ANALYSIS_SYSTEM_PROMPT = "\u4f60\u662f\u4e00\u4f4d\u5c08\u696d\u7684\u80a1\u7968\u5206\u6790\u5e2b\u3002\u6839\u64da\u63d0\u4f9b\u7684\u80a1\u7968\u8cc7\u6599\uff0c\u7d66\u51fa\u5c08\u696d\u7684\u5206\u6790\u3002\n\n\u5206\u6790\u5167\u5bb9\u5305\u62ec\uff1a\n1. \u76ee\u524d\u50f9\u683c\u548c\u6f32\u52d5\u5206\u6790\n2. \u8207\u6b77\u53f2\u9ad8\u4f4e\u6bd4\u8f03\n3. \u57fa\u672c\u9762\u8a55\u4f30\uff08\u5982\u6709\u8cc7\u6599\uff09\n4. \u77ed\u671f\u8da8\u52e2\u5224\u65b7\n5. \u98a8\u96aa\u63d0\u9192\n\n\u8acb\u7528\u7e41\u9ad4\u4e2d\u6587\u56de\u7b54\uff0c\u4fdd\u6301\u5c08\u696d\u5ba2\u89c0\u3002"
-
+ANALYSIS_SYSTEM_PROMPT = (
+    "你是一位專業的股票分析師。根據提供的股票資料，給出簡明專業的分析。\n\n"
+    "分析內容包括：\n"
+    "1. 目前價格和漲動分析\n"
+    "2. 與歷史高低比較\n"
+    "3. 短期趨勢判斷\n"
+    "4. 風險提醒\n\n"
+    "請用繁體中文回答，保持專業客觀。"
+)
 
 _client = None
-
-
 
 
 def _get_client():
@@ -35,11 +43,62 @@ def _get_client():
     return _client
 
 
-
-
 def answer_question(question: str) -> str:
     try:
         client = _get_client()
         message = client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
+            system=EXPERT_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": question}],
+        )
+        return message.content[0].text
+    except Exception as e:
+        logger.error("answer_question error: %s", e)
+        raise
+
+
+def analyze_stock_with_ai(code: str) -> str:
+    from stock_service import get_stock_info
+
+    if re.match(r"^\d{4,6}$", code):
+        info = get_stock_info(code, market="TW")
+    else:
+        info = get_stock_info(code, market="US")
+
+    if info is None:
+        return "找不到股票代號「" + code + "」的資料"
+    if "error" in info:
+        return "無法取得「" + code + "」的資料，請稍後再試"
+
+    name = info.get("name", code)
+    price = info.get("price", "N/A")
+    change = info.get("change", "N/A")
+    change_pct = info.get("change_pct", "N/A")
+    high_52w = info.get("high_52w", "N/A")
+    low_52w = info.get("low_52w", "N/A")
+    volume = info.get("volume", "N/A")
+
+    prompt = (
+        "請分析以下股票：\n"
+        + "股票代號：" + code + "\n"
+        + "名稱：" + str(name) + "\n"
+        + "目前價格：" + str(price) + "\n"
+        + "今日漲跌：" + str(change) + "（" + str(change_pct) + "）\n"
+        + "52週最高：" + str(high_52w) + "\n"
+        + "52週最低：" + str(low_52w) + "\n"
+        + "成交量：" + str(volume) + "\n"
+    )
+
+    try:
+        client = _get_client()
+        message = client.messages.create(
+            model=MODEL,
+            max_tokens=MAX_TOKENS,
+            system=ANALYSIS_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return message.content[0].text
+    except Exception as e:
+        logger.error("analyze_stock_with_ai error: %s", e)
+        raise
