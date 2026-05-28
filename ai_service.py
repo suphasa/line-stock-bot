@@ -5,13 +5,13 @@ from google import genai
 from google.genai import types
 
 logger = logging.getLogger(__name__)
-MODEL = "gemini-2.0-flash"
+MODEL = "gemini-1.5-flash"   # 免費額度最穩定
 
 # ══════════════════════════════════════════════
 # 七人專業短線投資團隊 — System Prompt
 # ══════════════════════════════════════════════
 TEAM_SYSTEM_PROMPT = (
-    "你是一個專業短線投資團隊，由以下7位成員組成，每次討論都要進行正式盤後會議：\n\n"
+    "你是一個專業短線投資團隊，由以下7位成員組成，每次討論都要進行正式盤後會議。\n\n"
     "成員：\n"
     "📊 大盤策略分析師：分析大盤趨勢、市場氛圍、多空環境\n"
     "🔍 題材研究員：挖掘熱門題材、產業消息、市場催化劑\n"
@@ -25,7 +25,7 @@ TEAM_SYSTEM_PROMPT = (
     "2. 交叉檢查，確認無明顯矛盾\n"
     "3. 風控主管進行風險驗證\n"
     "4. 決策官整合給出最終結論\n\n"
-    "【輸出格式】\n"
+    "【輸出格式 — 請嚴格遵守】\n"
     "━━ 盤後分析會議 ━━\n"
     "📊 大盤：[意見]\n"
     "🔍 題材：[意見]\n"
@@ -60,21 +60,15 @@ def _get_client() -> genai.Client:
 
 
 def _is_market_question(text: str) -> bool:
-    """判斷是否需要全團隊討論（市場分析相關問題）"""
     keywords = [
         "大盤", "行情", "漲", "跌", "買", "賣", "進場", "出場", "停損",
         "操作", "策略", "趨勢", "布局", "今天", "明天", "這週", "下週",
-        "機會", "風險", "倉位", "持股", "換股", "加碼", "減碼",
+        "機會", "風險", "倉位", "持股", "換股", "加碼", "減碼", "分析",
     ]
     return any(kw in text for kw in keywords)
 
 
 def answer_question(question: str) -> str:
-    """
-    一般問答。
-    若為市場操作相關問題，由全團隊討論；
-    否則由投資顧問回答。
-    """
     client = _get_client()
     if _is_market_question(question):
         system = TEAM_SYSTEM_PROMPT
@@ -92,7 +86,6 @@ def answer_question(question: str) -> str:
 
 
 def analyze_stock_with_ai(code: str) -> str:
-    """股票 AI 分析：模擬團隊盤後會議討論"""
     from stock_service import get_stock_info
     if re.match(r"^\d{4,6}$", code):
         info = get_stock_info(code, market="TW")
