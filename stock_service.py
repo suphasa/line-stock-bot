@@ -24,7 +24,7 @@ TPEX_REALTIME_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_realtime_
 _TW_COMPANY_CACHE: dict[str, str] = {}
 
 
-# ── 主要介面 ───────────────────────────────────────────────────────────────────
+# ── 主要介面 ────────────────────────────────────────────────────────────────────
 
 def get_stock_info(code: str, market: str) -> dict | None:
     """
@@ -45,7 +45,7 @@ def get_stock_info(code: str, market: str) -> dict | None:
         raise ValueError(f"不支援的市場：{market}")
 
 
-# ── 台股 ───────────────────────────────────────────────────────────────────────
+# ── 台股 ────────────────────────────────────────────────────────────────────────
 
 def _get_tw_stock(code: str) -> dict | None:
     """台股：優先 TWSE 即時 API，失敗則 fallback 到 yfinance"""
@@ -134,7 +134,7 @@ def _twse_realtime(code: str, exchange: str = "tse") -> dict | None:
         return None
 
 
-# ── 美股 ────────────────────────────────────────────────────────────────────
+# ── 美股 ────────────────────────────────────────────────────────────────────────
 
 def _get_us_stock(code: str) -> dict | None:
     """美股：使用 yfinance"""
