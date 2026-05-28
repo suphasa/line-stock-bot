@@ -6,16 +6,23 @@ import anthropic
 import os
 import logging
 
+
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-opus-4-6"
-MAX_TOKENS = 1024
+
+MODEL = "claude-sonnet-4-6"
+MAX_TOKENS = 512
+
 
 EXPERT_SYSTEM_PROMPT = "\u4f60\u662f\u4e00\u4f4d\u5c08\u696d\u7684\u80a1\u7968\u5206\u6790\u5e2b\uff0c\u64c5\u9577\u53f0\u7063\u80a1\u5e02\u548c\u7f8e\u5e02\u5206\u6790\u3002\n\u8acb\u7528\u7e41\u9ad4\u4e2d\u6587\u56de\u7b54\u3002\n\n\u4f60\u80fd\u5920\uff1a\n1. \u89e3\u91cb\u80a1\u5e02\u884c\u60c5\u548c\u8da8\u52e2\n2. \u5206\u6790\u500b\u80a1\u57fa\u672c\u9762\u548c\u6280\u8853\u9762\n3. \u89e3\u91cb\u80a1\u5e02\u6307\u6a19\u548c\u8853\u8a9e\n4. \u63d0\u4f9b\u6295\u8cc7\u5efa\u8b70\uff08\u4e0d\u69cb\u6210\u6295\u8cc7\u5efa\u8b70\uff09\n5. \u5206\u6790\u7e3d\u9ad4\u7d93\u6fdf\u548c\u7522\u696d\u8da8\u52e2\n\n\u8acb\u4fdd\u6301\u5c08\u696d\u3001\u5ba2\u89c0\uff0c\u4e26\u63d0\u9192\u7528\u6236\u6295\u8cc7\u6709\u98a8\u96aa\u3002"
 
+
 ANALYSIS_SYSTEM_PROMPT = "\u4f60\u662f\u4e00\u4f4d\u5c08\u696d\u7684\u80a1\u7968\u5206\u6790\u5e2b\u3002\u6839\u64da\u63d0\u4f9b\u7684\u80a1\u7968\u8cc7\u6599\uff0c\u7d66\u51fa\u5c08\u696d\u7684\u5206\u6790\u3002\n\n\u5206\u6790\u5167\u5bb9\u5305\u62ec\uff1a\n1. \u76ee\u524d\u50f9\u683c\u548c\u6f32\u52d5\u5206\u6790\n2. \u8207\u6b77\u53f2\u9ad8\u4f4e\u6bd4\u8f03\n3. \u57fa\u672c\u9762\u8a55\u4f30\uff08\u5982\u6709\u8cc7\u6599\uff09\n4. \u77ed\u671f\u8da8\u52e2\u5224\u65b7\n5. \u98a8\u96aa\u63d0\u9192\n\n\u8acb\u7528\u7e41\u9ad4\u4e2d\u6587\u56de\u7b54\uff0c\u4fdd\u6301\u5c08\u696d\u5ba2\u89c0\u3002"
 
+
 _client = None
+
+
 
 
 def _get_client():
@@ -28,69 +35,11 @@ def _get_client():
     return _client
 
 
+
+
 def answer_question(question: str) -> str:
     try:
         client = _get_client()
         message = client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=EXPERT_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": question}]
-        )
-        return message.content[0].text
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        return "\u5c0d\u4e0d\u8d77\uff0cAI\u670d\u52d9\u66ab\u6642\u7121\u6cd5\u4f7f\u7528\uff0c\u8acb\u7a0d\u5f8c\u518d\u8a66\u3002"
-
-
-def analyze_stock_with_ai(stock_data: dict, user_question: str = "") -> str:
-    try:
-        client = _get_client()
-        name = stock_data.get("name", "")
-        code = stock_data.get("code", "")
-        price = stock_data.get("price", 0)
-        change = stock_data.get("change", 0)
-        change_pct = stock_data.get("change_pct", 0)
-        high_52w = stock_data.get("high_52w", "N/A")
-        low_52w = stock_data.get("low_52w", "N/A")
-        volume = stock_data.get("volume", 0)
-        market = stock_data.get("market", "TW")
-        currency = "TWD" if market == "TW" else "USD"
-        stock_summary = (
-            f"\u80a1\u7968\u4ee3\u78bc\uff1a{code}\n"
-            f"\u80a1\u7968\u540d\u7a31\uff1a{name}\n"
-            f"\u76ee\u524d\u50f9\u683c\uff1a{price} {currency}\n"
-            f"\u6f32\u8dcc\uff1a{change:+.2f} ({change_pct:+.2f}%)\n"
-            f"52\u9031\u9ad8\uff1a{high_52w}\n"
-            f"52\u9031\u4f4e\uff1a{low_52w}\n"
-            f"\u6210\u4ea4\u91cf\uff1a{volume:,}\n"
-        )
-        pe_ratio = stock_data.get("pe_ratio")
-        if pe_ratio:
-            stock_summary += f"P/E\u6bd4\uff1a{pe_ratio}\n"
-        market_cap = stock_data.get("market_cap")
-        if market_cap:
-            stock_summary += f"\u5e02\u5080\uff1a{market_cap}\n"
-        if user_question:
-            user_msg = (
-                f"\u4ee5\u4e0b\u662f{name}({code})\u7684\u80a1\u7968\u8cc7\u6599\uff1a\n\n"
-                f"{stock_summary}\n"
-                f"\u7528\u6236\u554f\u984c\uff1a{user_question}"
-            )
-        else:
-            user_msg = (
-                f"\u8acb\u5206\u6790\u4ee5\u4e0b{name}({code})\u7684\u80a1\u7968\u8cc7\u6599\uff1a\n\n"
-                f"{stock_summary}\n"
-                "\u8acb\u63d0\u4f9b\u7d9c\u5408\u5206\u6790\u3002"
-            )
-        message = client.messages.create(
-            model=MODEL,
-            max_tokens=MAX_TOKENS,
-            system=ANALYSIS_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}]
-        )
-        return message.content[0].text
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        return "\u5c0d\u4e0d\u8d77\uff0cAI\u5206\u6790\u670d\u52d9\u66ab\u6642\u7121\u6cd5\u4f7f\u7528\uff0c\u8acb\u7a0d\u5f8c\u518d\u8a66\u3002"
-
