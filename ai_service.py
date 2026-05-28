@@ -1,89 +1,124 @@
-import google.generativeai as genai
 import os
 import re
 import logging
+from google import genai
+from google.genai import types
 
 logger = logging.getLogger(__name__)
+MODEL = "gemini-2.0-flash"
 
-MODEL = "gemini-1.5-flash"
-
-EXPERT_SYSTEM_PROMPT = (
-    "你是一位專業的股票分析師，擅長台灣股市和美市分析。"
+# ══════════════════════════════════════════════
+# 七人專業短線投資團隊 — System Prompt
+# ══════════════════════════════════════════════
+TEAM_SYSTEM_PROMPT = (
+    "你是一個專業短線投資團隊，由以下7位成員組成，每次討論都要進行正式盤後會議：\n\n"
+    "成員：\n"
+    "📊 大盤策略分析師：分析大盤趨勢、市場氛圍、多空環境\n"
+    "🔍 題材研究員：挖掘熱門題材、產業消息、市場催化劑\n"
+    "📈 技術分析師：解讀K線、均線、RSI、MACD、量價關係\n"
+    "💰 籌碼分析師：分析主力動向、外資投信、融資融券變化\n"
+    "🛡️ 風控主管：評估風險、止損機制、控制最大回撤\n"
+    "⚡ 交易執行主管：規劃進場時機、停損點、目標價位\n"
+    "🎯 總結決策官：整合各方意見，給出最終建議\n\n"
+    "【工作流程】\n"
+    "1. 各成員輪流發表意見（內部討論）\n"
+    "2. 交叉檢查，確認無明顯矛盾\n"
+    "3. 風控主管進行風險驗證\n"
+    "4. 決策官整合給出最終結論\n\n"
+    "【輸出格式】\n"
+    "━━ 盤後分析會議 ━━\n"
+    "📊 大盤：[意見]\n"
+    "🔍 題材：[意見]\n"
+    "📈 技術：[意見]\n"
+    "💰 籌碼：[意見]\n"
+    "🛡️ 風控：[風險評估]\n"
+    "⚡ 執行：[執行建議]\n"
+    "━━━━━━━━━━━━━━\n"
+    "🎯 決策官：[最終結論]\n\n"
+    "【最高原則 — 交易室文化】\n"
+    "✅ 正確、專業、謹慎、不馬虎\n"
+    "✅ 不硬推、不為湊數推薦\n"
+    "✅ 寧可錯過，也不要亂做\n"
+    "✅ 寧可觀望，也不要高風險硬進場\n"
+    "✅ 資金生存最優先：控制回撤 > 追求獲利\n"
+    "✅ 若市場風險升高，主動建議降低部位\n\n"
     "請用繁體中文回答。"
-    "你能夠：1.解釋股市行情和趨勢 2.分析個股基本面和技術面 "
-    "3.解釋股市指標和術語 4.提供參考資訊（不構成投資建議）"
-    "5.分析總體經濟和產業趨勢。"
-    "請保持專業、客觀，並提醒用戶投資有風險。"
 )
 
-ANALYSIS_SYSTEM_PROMPT = (
-    "你是一位專業的股票分析師。根據提供的股票資料，給出簡明專業的分析。"
-    "分析內容包括：1.目前價格和漲動分析 2.與歷史高低比較 "
-    "3.短期趨勢判斷 4.風險提醒。"
-    "請用繁體中文回答，保持專業客觀。"
+ADVISOR_PROMPT = (
+    "你是專業短線投資團隊的投資顧問，負責解答股市相關問題。"
+    "回答要專業、準確、清晰，適度提示風險，不給出過於明確的買賣指令。"
+    "請用繁體中文回答。"
 )
 
-_model_expert = None
-_model_analysis = None
 
-
-def _get_model(system_prompt: str):
+def _get_client() -> genai.Client:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise ValueError("GEMINI_API_KEY not set")
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel(
-        model_name=MODEL,
-        system_instruction=system_prompt,
-    )
+        raise ValueError("GEMINI_API_KEY is not set")
+    return genai.Client(api_key=api_key)
+
+
+def _is_market_question(text: str) -> bool:
+    """判斷是否需要全團隊討論（市場分析相關問題）"""
+    keywords = [
+        "大盤", "行情", "漲", "跌", "買", "賣", "進場", "出場", "停損",
+        "操作", "策略", "趨勢", "布局", "今天", "明天", "這週", "下週",
+        "機會", "風險", "倉位", "持股", "換股", "加碼", "減碼",
+    ]
+    return any(kw in text for kw in keywords)
 
 
 def answer_question(question: str) -> str:
-    try:
-        model = _get_model(EXPERT_SYSTEM_PROMPT)
-        response = model.generate_content(question)
-        return response.text
-    except Exception as e:
-        logger.error("answer_question error: %s", e)
-        raise
+    """
+    一般問答。
+    若為市場操作相關問題，由全團隊討論；
+    否則由投資顧問回答。
+    """
+    client = _get_client()
+    if _is_market_question(question):
+        system = TEAM_SYSTEM_PROMPT
+        prompt = f"請針對以下問題進行團隊討論：\n\n{question}"
+    else:
+        system = ADVISOR_PROMPT
+        prompt = question
+
+    response = client.models.generate_content(
+        model=MODEL,
+        config=types.GenerateContentConfig(system_instruction=system),
+        contents=prompt,
+    )
+    return response.text
 
 
 def analyze_stock_with_ai(code: str) -> str:
+    """股票 AI 分析：模擬團隊盤後會議討論"""
     from stock_service import get_stock_info
-
     if re.match(r"^\d{4,6}$", code):
         info = get_stock_info(code, market="TW")
     else:
-        info = get_stock_info(code, market="US")
+        info = get_stock_info(code.upper(), market="US")
 
-    if info is None:
-        return "找不到股票代號「" + code + "」的資料"
     if "error" in info:
-        return "無法取得「" + code + "」的資料，請稍後再試"
+        return f"⚠️ 無法取得 {code} 的股票資料：{info['error']}"
 
     name = info.get("name", code)
-    price = info.get("price", "N/A")
-    change = info.get("change", "N/A")
-    change_pct = info.get("change_pct", "N/A")
-    high_52w = info.get("high_52w", "N/A")
-    low_52w = info.get("low_52w", "N/A")
-    volume = info.get("volume", "N/A")
-
-    prompt = (
-        "請分析以下股票：\n"
-        + "股票代號：" + code + "\n"
-        + "名稱：" + str(name) + "\n"
-        + "目前價格：" + str(price) + "\n"
-        + "今日漲跌：" + str(change) + "（" + str(change_pct) + "）\n"
-        + "52週最高：" + str(high_52w) + "\n"
-        + "52週最低：" + str(low_52w) + "\n"
-        + "成交量：" + str(volume) + "\n"
+    data_summary = (
+        f"股票代號：{info.get('code', code)}\n"
+        f"股票名稱：{name}\n"
+        f"目前價格：{info.get('price', 'N/A')}\n"
+        f"漲跌幅：{info.get('change_percent', 'N/A')}\n"
+        f"成交量：{info.get('volume', 'N/A')}\n"
+        f"52週最高：{info.get('high_52w', 'N/A')}\n"
+        f"52週最低：{info.get('low_52w', 'N/A')}\n"
+        f"本益比：{info.get('pe_ratio', 'N/A')}\n"
+        f"市值：{info.get('market_cap', 'N/A')}\n"
     )
 
-    try:
-        model = _get_model(ANALYSIS_SYSTEM_PROMPT)
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        logger.error("analyze_stock_with_ai error: %s", e)
-        raise
+    client = _get_client()
+    response = client.models.generate_content(
+        model=MODEL,
+        config=types.GenerateContentConfig(system_instruction=TEAM_SYSTEM_PROMPT),
+        contents=f"請針對以下股票進行盤後分析會議：\n\n{data_summary}",
+    )
+    return response.text
