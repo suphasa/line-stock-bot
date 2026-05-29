@@ -164,3 +164,31 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
             background_tasks.add_task(process_message, user_id, user_text)
 
     return PlainTextResponse("OK")  # Returns 200 immediately, background continues
+
+@app.post("/push-report")
+async def push_report(request: Request):
+        """Nightly analysis report from Cowork, pushed to LINE."""
+        data = await request.json()
+        push_secret = os.getenv("PUSH_SECRET", "")
+        line_user_id = os.getenv("LINE_MY_USER_ID", "")
+
+    if not push_secret or data.get("secret", "") != push_secret:
+                raise HTTPException(status_code=401, detail="Unauthorized")
+            if not line_user_id:
+                        raise HTTPException(status_code=500, detail="LINE_MY_USER_ID not configured")
+
+    message = data.get("message", "")
+    if not message:
+                raise HTTPException(status_code=400, detail="No message provided")
+
+    chunks = [message[i:i+4900] for i in range(0, len(message), 4900)]
+    msgs = [text_msg(chunk) for chunk in chunks[:5]]
+
+    try:
+                send_push(line_user_id, msgs)
+                logger.info("Push report sent (%d chunk(s))", len(msgs))
+                return {"status": "ok", "chunks": len(msgs)}
+except Exception as e:
+            logger.error("Push report failed: %s", e)
+            raise HTTPException(status_code=500, detail=str(e))
+    
