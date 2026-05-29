@@ -95,6 +95,11 @@ def process_message(user_id: str, user_text: str):
     user_text = user_text.strip()
     logger.info("Processing message from %s: %s", user_id, user_text[:50])
 
+    # 特殊指令：查詢自己的 LINE User ID
+    if user_text in ["我的ID", "我的id", "myid", "my id", "ID", "id"]:
+        send_push(user_id, [text_msg(f"您的 LINE User ID 是：\n{user_id}")])
+        return
+
     if user_text in WELCOME_TRIGGERS:
         send_push(user_id, [text_msg(MSG_WELCOME)])
         return
