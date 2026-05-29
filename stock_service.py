@@ -8,21 +8,12 @@ import re
 import logging
 import requests
 import yfinance as yf
-from functools import lru_cache
-from datetime import datetime, date
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 # TWSE 即時報價 API（上市股票）
 TWSE_REALTIME_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
-# TWSE 個股基本資料
-TWSE_COMPANY_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
-# 上櫃股票（OTC）即時 API
-TPEX_REALTIME_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_realtime_quotes"
-
-# 台股公司名稱快取（避免重複請求）
-_TW_COMPANY_CACHE: dict[str, str] = {}
-
 
 # ── 主要介面 ────────────────────────────────────────────────────────────────────
 
@@ -31,7 +22,7 @@ def get_stock_info(code: str, market: str) -> dict | None:
     取得股票即時資料，統一格式回傳。
 
     Args:
-        code:   股票代碼（台股：'2330'；美股：'AAPL'）
+        code: 股票代碼（台股：'2330'；美股：'AAPL'）
         market: 'TW' 或 'US'
 
     Returns:
@@ -43,7 +34,6 @@ def get_stock_info(code: str, market: str) -> dict | None:
         return _get_us_stock(code)
     else:
         raise ValueError(f"不支援的市場：{market}")
-
 
 # ── 台股 ────────────────────────────────────────────────────────────────────────
 
@@ -59,10 +49,9 @@ def _get_tw_stock(code: str) -> dict | None:
     if data:
         return data
 
-    # Fallback：yfinance（含歷史資料）
+    # Fallback：yfinance（全天候，含盤後歷史資料）
     logger.warning(f"TWSE API 失敗，改用 yfinance 查詢 {code}.TW")
     return _yfinance_stock(code + ".TW", market="TW", original_code=code)
-
 
 def _twse_realtime(code: str, exchange: str = "tse") -> dict | None:
     """
@@ -86,10 +75,9 @@ def _twse_realtime(code: str, exchange: str = "tse") -> dict | None:
 
         item = items[0]
 
-        # TWSE 回傳欄位說明：
-        # z = 當盤成交價, y = 昨收, o = 開盤, h = 最高, l = 最低
-        # v = 成交量(張), n = 公司名稱, c = 代碼
-        current_price = _safe_float(item.get("z") or item.get("y"))
+        # 修正 Bug：分別評估 z 和 y，避免 "-" 字串短路問題
+        # z = 當盤成交價（盤後為 "-"）, y = 昨收
+        current_price = _safe_float(item.get("z")) or _safe_float(item.get("y"))
         if current_price is None:
             return None
 
@@ -97,7 +85,7 @@ def _twse_realtime(code: str, exchange: str = "tse") -> dict | None:
         open_price = _safe_float(item.get("o"))
         high = _safe_float(item.get("h"))
         low = _safe_float(item.get("l"))
-        volume_lots = _safe_float(item.get("v"))  # 張（1張=1000股）
+        volume_lots = _safe_float(item.get("v"))  # 張
         name = item.get("n", code)
 
         change = round(current_price - prev_close, 2) if prev_close else 0
@@ -118,7 +106,7 @@ def _twse_realtime(code: str, exchange: str = "tse") -> dict | None:
             "volume": int(volume_lots) if volume_lots else None,
             "volume_unit": "張",
             "currency": "TWD",
-            "pe_ratio": None,        # TWSE 即時 API 不含 PE，可用 FinMind 補充
+            "pe_ratio": None,
             "market_cap": None,
             "52w_high": None,
             "52w_low": None,
@@ -133,47 +121,50 @@ def _twse_realtime(code: str, exchange: str = "tse") -> dict | None:
         logger.warning(f"TWSE 資料解析失敗（{code}）: {e}")
         return None
 
-
 # ── 美股 ────────────────────────────────────────────────────────────────────────
 
 def _get_us_stock(code: str) -> dict | None:
     """美股：使用 yfinance"""
     return _yfinance_stock(code, market="US", original_code=code)
 
-
 # ── yfinance 通用 ────────────────────────────────────────────────────────────────
 
 def _yfinance_stock(ticker_symbol: str, market: str, original_code: str) -> dict | None:
     """
     使用 yfinance 取得股票資料（台股加 .TW 後綴，美股直接代碼）
+    支援新舊版 yfinance 欄位名稱
     """
     try:
         ticker = yf.Ticker(ticker_symbol)
         info = ticker.info
 
-        # 確認股票存在（yfinance 對不存在的代碼回傳空 dict 或僅有少數欄位）
-        if not info or info.get("regularMarketPrice") is None:
-            # 嘗試從 history 判斷
-            hist = ticker.history(period="1d")
+        # 嘗試多個欄位名稱（yfinance API 欄位名稱因版本而異）
+        current_price = (
+            info.get("currentPrice") or
+            info.get("regularMarketPrice") or
+            info.get("navPrice")
+        )
+        prev_close = (
+            info.get("previousClose") or
+            info.get("regularMarketPreviousClose")
+        )
+
+        if not current_price:
+            # 從歷史資料取最近收盤價
+            hist = ticker.history(period="5d")
             if hist.empty:
                 return None
             current_price = float(hist["Close"].iloc[-1])
-            prev_close = float(hist["Open"].iloc[-1])
-        else:
-            current_price = info.get("regularMarketPrice") or info.get("currentPrice")
-            prev_close = info.get("regularMarketPreviousClose") or info.get("previousClose")
-
-        if not current_price:
-            return None
+            prev_close = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else current_price
 
         prev_close = prev_close or current_price
-        change = round(current_price - prev_close, 2)
-        change_pct = round(change / prev_close * 100, 2) if prev_close else 0
+        change = round(float(current_price) - float(prev_close), 2)
+        change_pct = round(change / float(prev_close) * 100, 2) if prev_close else 0
 
         # 判斷幣別
         currency = info.get("currency", "TWD" if market == "TW" else "USD")
 
-        # 市值單位轉換
+        # 市值格式化
         market_cap_raw = info.get("marketCap")
         market_cap_str = _format_market_cap(market_cap_raw, currency)
 
@@ -182,14 +173,14 @@ def _yfinance_stock(ticker_symbol: str, market: str, original_code: str) -> dict
             "name": info.get("shortName") or info.get("longName") or original_code,
             "market": market,
             "exchange": info.get("exchange", ""),
-            "price": round(current_price, 2),
-            "prev_close": round(prev_close, 2),
-            "open": round(info.get("regularMarketOpen", 0) or 0, 2),
-            "high": round(info.get("regularMarketDayHigh", 0) or 0, 2),
-            "low": round(info.get("regularMarketDayLow", 0) or 0, 2),
+            "price": round(float(current_price), 2),
+            "prev_close": round(float(prev_close), 2),
+            "open": _safe_round(info.get("regularMarketOpen") or info.get("open")),
+            "high": _safe_round(info.get("regularMarketDayHigh") or info.get("dayHigh")),
+            "low": _safe_round(info.get("regularMarketDayLow") or info.get("dayLow")),
             "change": change,
             "change_pct": change_pct,
-            "volume": info.get("regularMarketVolume"),
+            "volume": info.get("regularMarketVolume") or info.get("volume"),
             "volume_unit": "股",
             "currency": currency,
             "pe_ratio": _safe_round(info.get("trailingPE")),
@@ -209,7 +200,6 @@ def _yfinance_stock(ticker_symbol: str, market: str, original_code: str) -> dict
         logger.error(f"yfinance 查詢失敗 {ticker_symbol}: {e}")
         return None
 
-
 # ── 工具函式 ────────────────────────────────────────────────────────────────────
 
 def _safe_float(value) -> float | None:
@@ -221,7 +211,6 @@ def _safe_float(value) -> float | None:
     except (ValueError, TypeError):
         return None
 
-
 def _safe_round(value, ndigits: int = 2):
     """安全四捨五入，None 回傳 None"""
     if value is None:
@@ -231,20 +220,17 @@ def _safe_round(value, ndigits: int = 2):
     except (ValueError, TypeError):
         return None
 
-
 def _format_market_cap(raw: int | None, currency: str) -> str | None:
-    """格式化市值"""
+    """格式化市值（避免 f-string 中直接使用 $ 符號）"""
     if not raw:
         return None
     if currency == "TWD":
-        # 台幣：億元
         yi = raw / 1e8
         return f"{yi:,.0f} 億"
     else:
-        # 美元：B/T
         if raw >= 1e12:
-            return f"${raw/1e12:.2f}T"
+            return "$" + f"{raw/1e12:.2f}T"
         elif raw >= 1e9:
-            return f"${raw/1e9:.1f}B"
+            return "$" + f"{raw/1e9:.1f}B"
         else:
-            return f"${raw/1e6:.0f}M"
+            return "$" + f"{raw/1e6:.0f}M"
