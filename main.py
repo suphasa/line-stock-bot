@@ -11,6 +11,7 @@ from linebot.v3.messaging import (
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from dotenv import load_dotenv
+import httpx
 from stock_service import get_stock_info
 from ai_service import answer_question, analyze_stock_with_ai
 from flex_templates import build_stock_card
@@ -22,10 +23,13 @@ logger = logging.getLogger(__name__)
 CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
 
+# Render sets this automatically; fallback to localhost for local dev
+SERVICE_URL = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:10000")
+
 configuration = Configuration(access_token=CHANNEL_ACCESS_TOKEN)
 parser = WebhookParser(CHANNEL_SECRET)
 
-MSG_WELCOME = "我是您的股票AI專家！U0001f916\n\n可以協助您：\nU0001f4c8 台股查詢：輸入2330、台積電\nU0001f30e 美股查詢：輸入AAPL、TSLA、NVDA\nU0001f9e0 AI分析：輸入「分析2330」\n請輸入股票代號或問題："
+MSG_WELCOME = "我是您的股票AI專家！\n\n可以協助您：\n台股查詢：輸入2330、台積電\n美股查詢：輸入AAPL、TSLA、NVDA\nAI分析：輸入「分析2330」\n請輸入股票代號或問題："
 MSG_TW_NOT_FOUND = "找不到台股代號「{code}」\n請確認代號（例：2330、台積電）"
 MSG_US_NOT_FOUND = "找不到美股代號「{code}」\n請確認代號（AAPL/TSLA/NVDA）"
 MSG_FETCH_ERROR = "無法取得{code}的資料，請稍後再試"
@@ -39,10 +43,29 @@ WELCOME_TRIGGERS = [
 ]
 ANALYZE_PREFIX = "分析"
 
+# ── 心跳任務：每 9 分鐘 ping 自己，防止 Render 免費版休眠 ──────────────────
+async def keepalive():
+    """Ping own /health every 9 min to prevent Render free-tier spin-down."""
+    await asyncio.sleep(60)  # 等 1 分鐘讓服務完全啟動
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{SERVICE_URL}/health")
+                logger.info("Keepalive ping OK: %s", resp.status_code)
+        except Exception as e:
+            logger.warning("Keepalive ping failed: %s", e)
+        await asyncio.sleep(540)  # 9 分鐘
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("LINE Stock AI Bot starting...")
+    task = asyncio.create_task(keepalive())
     yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
     logger.info("LINE Stock AI Bot stopped.")
 
 app = FastAPI(lifespan=lifespan)
