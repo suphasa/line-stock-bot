@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
+LINE_MY_USER_ID = os.getenv("LINE_MY_USER_ID", "")
+PUSH_SECRET = os.getenv("PUSH_SECRET", "")
 
 # Render sets this automatically; fallback to localhost for local dev
 SERVICE_URL = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:10000")
